@@ -2,40 +2,64 @@ const { Client, Databases, Query } = require('node-appwrite');
 const PDFDocument = require('pdfkit');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+// Initialize client with proper server-side configuration
 const client = new Client()
     .setEndpoint(process.env.APPWRITE_FUNCTION_ENDPOINT || 'https://cloud.appwrite.io/v1')
     .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || '67d074d0001dadc04f94')
-    .setKey(process.env.APPWRITE_API_KEY);
+    .setKey(process.env.APPWRITE_API_KEY); 
 
 const databases = new Databases(client);
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 module.exports = async ({ req, res, log, error }) => {
     try {
+        log('Starting CV generation...');
+        
         const { talentId, additionalSkills = [], educationDetails = [], workExperiences = [], additionalEducation = [] } = JSON.parse(req.body);
 
         if (!talentId) {
             return res.json({ success: false, error: 'talentId is required' }, 400);
         }
 
-        // Fetch talent data
-        const talentQuery = await databases.listDocuments(
-            'career4me',
-            'talents',
-            [Query.equal('talentId', talentId)]
-        );
+        log(`Fetching talent data for ID: ${talentId}`);
+
+        // Try to fetch talent data with error handling
+        let talentQuery;
+        try {
+            talentQuery = await databases.listDocuments(
+                'career4me',
+                'talents',
+                [Query.equal('talentId', talentId)]
+            );
+            log(`Query successful. Found ${talentQuery.documents.length} documents`);
+        } catch (dbError) {
+            error('Database query failed:', dbError);
+            
+            // Check if it's an authentication error
+            if (dbError.message.includes('not authorized')) {
+                return res.json({ 
+                    success: false, 
+                    error: 'Database access not authorized. Please check function and collection permissions.',
+                    details: 'The function needs read access to the talents collection'
+                }, 403);
+            }
+            
+            throw dbError;
+        }
 
         if (talentQuery.documents.length === 0) {
             return res.json({ success: false, error: 'Talent not found' }, 404);
         }
 
         const talent = talentQuery.documents[0];
+        log(`Found talent: ${talent.fullname}`);
 
         // Combine skills
         const existingSkills = talent.skills || [];
         const allSkills = [...existingSkills, ...additionalSkills];
 
         // Generate professional summary using Gemini
+        log('Generating professional summary...');
         const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
         const summaryPrompt = `Generate a professional summary for a CV based on the following information:
         - Career Stage: ${talent.careerStage}
@@ -49,6 +73,7 @@ module.exports = async ({ req, res, log, error }) => {
         const summaryResult = await model.generateContent(summaryPrompt);
         const professionalSummary = summaryResult.response.text();
 
+        log('Generating PDF...');
         // Generate PDF
         const pdfBuffer = await generatePDF({
             talent,
@@ -62,6 +87,7 @@ module.exports = async ({ req, res, log, error }) => {
         // Convert to base64
         const base64PDF = pdfBuffer.toString('base64');
 
+        log('CV generation completed successfully');
         return res.json({
             success: true,
             pdfData: base64PDF,
@@ -76,7 +102,8 @@ module.exports = async ({ req, res, log, error }) => {
         error('CV generation failed:', err);
         return res.json({ 
             success: false, 
-            error: err.message || 'Failed to generate CV' 
+            error: err.message || 'Failed to generate CV',
+            details: process.env.NODE_ENV === 'development' ? err.stack : undefined
         }, 500);
     }
 };
@@ -170,4 +197,3 @@ async function generatePDF({ talent, allSkills, educationDetails, workExperience
         doc.end();
     });
 }
-
