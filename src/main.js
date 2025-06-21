@@ -60,7 +60,8 @@ module.exports = async ({ req, res, log, error }) => {
 
         // Generate professional summary using Gemini
         log('Generating professional summary...');
-        const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+        // Updated model name - using gemini-1.5-flash which is stable and widely available
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
         const summaryPrompt = `Generate a professional summary for a CV based on the following information:
         - Career Stage: ${talent.careerStage}
         - Skills: ${allSkills.join(', ')}
