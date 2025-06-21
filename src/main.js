@@ -15,7 +15,15 @@ module.exports = async ({ req, res, log, error }) => {
     try {
         log('Starting CV generation...');
         
-        const { talentId, additionalSkills = [], educationDetails = [], workExperiences = [], additionalEducation = [] } = JSON.parse(req.body);
+        const { 
+            talentId, 
+            additionalSkills = [], 
+            educationDetails = [], 
+            workExperiences = [], 
+            projects = [],
+            certifications = [],
+            contactInfo = {}
+        } = JSON.parse(req.body);
 
         if (!talentId) {
             return res.json({ success: false, error: 'talentId is required' }, 400);
@@ -54,22 +62,40 @@ module.exports = async ({ req, res, log, error }) => {
         const talent = talentQuery.documents[0];
         log(`Found talent: ${talent.fullname}`);
 
-        // Combine skills
+        // Combine skills - avoid duplicates
         const existingSkills = talent.skills || [];
-        const allSkills = [...existingSkills, ...additionalSkills];
+        const combinedSkills = [...new Set([...existingSkills, ...additionalSkills])];
+
+        // Filter out empty or invalid entries
+        const validEducation = educationDetails.filter(edu => 
+            edu && edu.degree && edu.degree.trim() && edu.institution && edu.institution.trim()
+        );
+        
+        const validWorkExperience = workExperiences.filter(exp => 
+            exp && exp.company && exp.company.trim() && exp.position && exp.position.trim()
+        );
+        
+        const validProjects = projects.filter(proj => 
+            proj && proj.title && proj.title.trim() && proj.description && proj.description.trim()
+        );
+        
+        const validCertifications = certifications.filter(cert => 
+            cert && cert.title && cert.title.trim() && cert.issuer && cert.issuer.trim()
+        );
 
         // Generate professional summary using Gemini
         log('Generating professional summary...');
-        // Updated model name - using gemini-1.5-flash which is stable and widely available
         const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
         const summaryPrompt = `Generate a professional summary for a CV based on the following information:
+        - Name: ${talent.fullname}
         - Career Stage: ${talent.careerStage}
-        - Skills: ${allSkills.join(', ')}
+        - Skills: ${combinedSkills.join(', ')}
         - Interests: ${(talent.interests || []).join(', ')}
         - Selected Path: ${talent.selectedPath || 'Not specified'}
         - Work Experiences: ${workExperiences.map(exp => `${exp.position} at ${exp.company}`).join(', ')}
+        - Projects: ${projects.map(proj => proj.title).join(', ')}
         
-        Create a 3-4 sentence professional summary that highlights their strengths and career focus. Make it compelling and professional.`;
+        Create a compelling 3-4 sentence professional summary that highlights their strengths, career focus, and key achievements. Make it professional and engaging.`;
 
         const summaryResult = await model.generateContent(summaryPrompt);
         const professionalSummary = summaryResult.response.text();
@@ -78,10 +104,12 @@ module.exports = async ({ req, res, log, error }) => {
         // Generate PDF
         const pdfBuffer = await generatePDF({
             talent,
-            allSkills,
-            educationDetails,
-            workExperiences,
-            additionalEducation,
+            combinedSkills,
+            educationDetails: validEducation,
+            workExperiences: validWorkExperience,
+            projects: validProjects,
+            certifications: validCertifications,
+            contactInfo,
             professionalSummary
         });
 
@@ -95,7 +123,7 @@ module.exports = async ({ req, res, log, error }) => {
             metadata: {
                 talentName: talent.fullname,
                 generatedAt: new Date().toISOString(),
-                sections: ['Personal Info', 'Professional Summary', 'Education', 'Work Experience', 'Skills', 'Certifications', 'Interests']
+                sections: ['Personal Info', 'Professional Summary', 'Education', 'Work Experience', 'Projects', 'Skills', 'Certifications', 'Contact Information']
             }
         });
 
@@ -109,9 +137,12 @@ module.exports = async ({ req, res, log, error }) => {
     }
 };
 
-async function generatePDF({ talent, allSkills, educationDetails, workExperiences, additionalEducation, professionalSummary }) {
+async function generatePDF({ talent, combinedSkills, educationDetails, workExperiences, projects, certifications, contactInfo, professionalSummary }) {
     return new Promise((resolve, reject) => {
-        const doc = new PDFDocument({ margin: 50 });
+        const doc = new PDFDocument({ 
+            margin: 50,
+            size: 'A4'
+        });
         const buffers = [];
 
         doc.on('data', buffers.push.bind(buffers));
@@ -121,78 +152,253 @@ async function generatePDF({ talent, allSkills, educationDetails, workExperience
         });
         doc.on('error', reject);
 
-        // Header
-        doc.fontSize(24).font('Times-Bold').text(talent.fullname, { align: 'center' });
-        doc.fontSize(12).font('Times-Roman').text(talent.email, { align: 'center' });
-        doc.moveDown(1);
+        let yPosition = 50;
 
-        // Professional Summary
-        doc.fontSize(16).font('Times-Bold').text('Professional Summary');
-        doc.fontSize(12).font('Times-Roman').text(professionalSummary, { align: 'justify' });
-        doc.moveDown(1);
+        // Header with Name
+        doc.fontSize(28).font('Helvetica-Bold').text(talent.fullname.toUpperCase(), 50, yPosition, { align: 'center' });
+        yPosition += 40;
 
-        // Education
-        doc.fontSize(16).font('Times-Bold').text('Education');
-        
-        // Existing degrees
-        if (talent.degrees && talent.degrees.length > 0) {
-            talent.degrees.forEach(degree => {
-                doc.fontSize(14).font('Times-Bold').text(degree);
-                doc.moveDown(0.5);
-            });
+        // Contact Information Line
+        const contactLine = [];
+        if (talent.email) contactLine.push(talent.email);
+        if (contactInfo.phone) contactLine.push(contactInfo.phone);
+        if (contactInfo.linkedin) contactLine.push(`LinkedIn: ${contactInfo.linkedin}`);
+        if (contactInfo.github) contactLine.push(`GitHub: ${contactInfo.github}`);
+        if (contactInfo.portfolio) contactLine.push(`Portfolio: ${contactInfo.portfolio}`);
+
+        if (contactLine.length > 0) {
+            doc.fontSize(11).font('Helvetica').text(contactLine.join(' | '), 50, yPosition, { align: 'center' });
+            yPosition += 30;
         }
 
-        // Education details
-        educationDetails.forEach(edu => {
-            doc.fontSize(14).font('Times-Bold').text(edu.degree || 'Degree');
-            doc.fontSize(12).font('Times-Roman').text(`${edu.institution} | ${edu.startDate} - ${edu.endDate}`);
-            doc.moveDown(0.5);
-        });
+        // Add a horizontal line
+        doc.moveTo(50, yPosition).lineTo(550, yPosition).stroke();
+        yPosition += 20;
 
-        // Additional education
-        additionalEducation.forEach(edu => {
-            doc.fontSize(14).font('Times-Bold').text(edu.title || 'Additional Education');
-            doc.fontSize(12).font('Times-Roman').text(`${edu.institution} | ${edu.year}`);
-            doc.moveDown(0.5);
-        });
-        
-        doc.moveDown(1);
+        // Professional Summary Section
+        if (professionalSummary) {
+            doc.fontSize(16).font('Helvetica-Bold').text('PROFESSIONAL SUMMARY', 50, yPosition);
+            yPosition += 20;
+            doc.fontSize(11).font('Helvetica').text(professionalSummary, 50, yPosition, { 
+                width: 500, 
+                align: 'justify' 
+            });
+            yPosition += doc.heightOfString(professionalSummary, { width: 500 }) + 20;
+        }
 
-        // Work Experience
-        if (workExperiences.length > 0) {
-            doc.fontSize(16).font('Times-Bold').text('Work Experience');
-            
-            workExperiences.forEach(exp => {
-                doc.fontSize(14).font('Times-Bold').text(`${exp.position} - ${exp.company}`);
-                doc.fontSize(12).font('Times-Roman').text(`${exp.startDate} - ${exp.endDate}`);
-                if (exp.description) {
-                    doc.text(exp.description, { align: 'justify' });
+        // Education Section
+        if (educationDetails && educationDetails.length > 0) {
+            // Check if we need a new page
+            if (yPosition > 700) {
+                doc.addPage();
+                yPosition = 50;
+            }
+
+            doc.fontSize(16).font('Helvetica-Bold').text('EDUCATION', 50, yPosition);
+            yPosition += 20;
+
+            educationDetails.forEach((edu) => {
+                // Check if we need a new page for each education entry
+                if (yPosition > 720) {
+                    doc.addPage();
+                    yPosition = 50;
                 }
-                doc.moveDown(0.5);
+
+                doc.fontSize(12).font('Helvetica-Bold').text(edu.degree, 50, yPosition);
+                yPosition += 15;
+                
+                doc.fontSize(11).font('Helvetica-Oblique').text(edu.institution, 50, yPosition);
+                if (edu.location) {
+                    doc.text(` • ${edu.location}`, { continued: true });
+                }
+                yPosition += 15;
+                
+                if (edu.startDate || edu.endDate) {
+                    const dateRange = `${edu.startDate || ''} - ${edu.endDate || 'Present'}`;
+                    doc.fontSize(10).font('Helvetica').text(dateRange, 50, yPosition);
+                    yPosition += 20;
+                } else {
+                    yPosition += 10;
+                }
             });
-            doc.moveDown(1);
         }
 
-        // Skills
-        if (allSkills.length > 0) {
-            doc.fontSize(16).font('Times-Bold').text('Skills');
-            doc.fontSize(12).font('Times-Roman').text(allSkills.join(' • '));
-            doc.moveDown(1);
-        }
+        // Work Experience Section
+        if (workExperiences && workExperiences.length > 0) {
+            // Check if we need a new page
+            if (yPosition > 650) {
+                doc.addPage();
+                yPosition = 50;
+            }
 
-        // Certifications
-        if (talent.certifications && talent.certifications.length > 0) {
-            doc.fontSize(16).font('Times-Bold').text('Certifications');
-            talent.certifications.forEach(cert => {
-                doc.fontSize(12).font('Times-Roman').text(`• ${cert}`);
+            doc.fontSize(16).font('Helvetica-Bold').text('WORK EXPERIENCE', 50, yPosition);
+            yPosition += 20;
+
+            workExperiences.forEach((exp) => {
+                // Check if we need a new page for each experience
+                if (yPosition > 600) {
+                    doc.addPage();
+                    yPosition = 50;
+                }
+
+                doc.fontSize(12).font('Helvetica-Bold').text(exp.position, 50, yPosition);
+                yPosition += 15;
+                
+                doc.fontSize(11).font('Helvetica-Oblique').text(exp.company, 50, yPosition);
+                if (exp.location) {
+                    doc.text(` • ${exp.location}`, { continued: true });
+                }
+                yPosition += 15;
+                
+                if (exp.startDate || exp.endDate) {
+                    const dateRange = `${exp.startDate || ''} - ${exp.endDate || 'Present'}`;
+                    doc.fontSize(10).font('Helvetica').text(dateRange, 50, yPosition);
+                    yPosition += 15;
+                }
+                
+                if (exp.description) {
+                    doc.fontSize(10).font('Helvetica').text(exp.description, 50, yPosition, { 
+                        width: 500, 
+                        align: 'justify' 
+                    });
+                    yPosition += doc.heightOfString(exp.description, { width: 500 }) + 20;
+                } else {
+                    yPosition += 10;
+                }
             });
-            doc.moveDown(1);
         }
 
-        // Interests
+        // Projects Section
+        if (projects && projects.length > 0) {
+            // Check if we need a new page
+            if (yPosition > 650) {
+                doc.addPage();
+                yPosition = 50;
+            }
+
+            doc.fontSize(16).font('Helvetica-Bold').text('PROJECTS', 50, yPosition);
+            yPosition += 20;
+
+            projects.forEach((project) => {
+                // Check if we need a new page for each project
+                if (yPosition > 600) {
+                    doc.addPage();
+                    yPosition = 50;
+                }
+
+                doc.fontSize(12).font('Helvetica-Bold').text(project.title, 50, yPosition);
+                yPosition += 15;
+                
+                if (project.description) {
+                    doc.fontSize(10).font('Helvetica').text(project.description, 50, yPosition, { 
+                        width: 500, 
+                        align: 'justify' 
+                    });
+                    yPosition += doc.heightOfString(project.description, { width: 500 }) + 10;
+                }
+                
+                if (project.technologies) {
+                    doc.fontSize(10).font('Helvetica-Bold').text('Technologies: ', 50, yPosition, { continued: true });
+                    doc.font('Helvetica').text(project.technologies);
+                    yPosition += 15;
+                }
+                
+                if (project.link) {
+                    doc.fontSize(10).font('Helvetica').text(`Link: ${project.link}`, 50, yPosition, {
+                        link: project.link,
+                        underline: true
+                    });
+                    yPosition += 15;
+                }
+
+                // Project details/achievements
+                if (project.details && project.details.length > 0) {
+                    project.details.forEach((detail) => {
+                        if (detail.trim()) {
+                            doc.fontSize(10).font('Helvetica').text(`• ${detail}`, 60, yPosition, { width: 490 });
+                            yPosition += doc.heightOfString(`• ${detail}`, { width: 490 }) + 5;
+                        }
+                    });
+                }
+                
+                yPosition += 15;
+            });
+        }
+
+        // Skills Section
+        if (combinedSkills && combinedSkills.length > 0) {
+            // Check if we need a new page
+            if (yPosition > 720) {
+                doc.addPage();
+                yPosition = 50;
+            }
+
+            doc.fontSize(16).font('Helvetica-Bold').text('TECHNICAL SKILLS', 50, yPosition);
+            yPosition += 20;
+            
+            const skillsText = combinedSkills.join(' • ');
+            doc.fontSize(11).font('Helvetica').text(skillsText, 50, yPosition, { 
+                width: 500, 
+                align: 'justify' 
+            });
+            yPosition += doc.heightOfString(skillsText, { width: 500 }) + 20;
+        }
+
+        // Certifications Section
+        if (certifications && certifications.length > 0) {
+            // Check if we need a new page
+            if (yPosition > 650) {
+                doc.addPage();
+                yPosition = 50;
+            }
+
+            doc.fontSize(16).font('Helvetica-Bold').text('CERTIFICATIONS & ACHIEVEMENTS', 50, yPosition);
+            yPosition += 20;
+
+            certifications.forEach((cert) => {
+                // Check if we need a new page for each certification
+                if (yPosition > 720) {
+                    doc.addPage();
+                    yPosition = 50;
+                }
+
+                doc.fontSize(11).font('Helvetica-Bold').text(cert.title, 50, yPosition);
+                yPosition += 15;
+                
+                doc.fontSize(10).font('Helvetica-Oblique').text(cert.issuer, 50, yPosition);
+                if (cert.date) {
+                    doc.text(` • ${cert.date}`, { continued: true });
+                }
+                yPosition += 15;
+                
+                if (cert.link) {
+                    doc.fontSize(10).font('Helvetica').text(`Link: ${cert.link}`, 50, yPosition, {
+                        link: cert.link,
+                        underline: true
+                    });
+                    yPosition += 20;
+                } else {
+                    yPosition += 10;
+                }
+            });
+        }
+
+        // Interests Section (if available)
         if (talent.interests && talent.interests.length > 0) {
-            doc.fontSize(16).font('Times-Bold').text('Interests');
-            doc.fontSize(12).font('Times-Roman').text(talent.interests.join(' • '));
+            // Check if we need a new page
+            if (yPosition > 720) {
+                doc.addPage();
+                yPosition = 50;
+            }
+
+            doc.fontSize(16).font('Helvetica-Bold').text('INTERESTS', 50, yPosition);
+            yPosition += 20;
+            
+            const interestsText = talent.interests.join(' • ');
+            doc.fontSize(11).font('Helvetica').text(interestsText, 50, yPosition, { 
+                width: 500, 
+                align: 'justify' 
+            });
         }
 
         doc.end();
