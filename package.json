@@ -1,0 +1,11 @@
+{
+  "name": "generate-cv",
+  "version": "1.0.0",
+  "description": "Generate professional CV with AI",
+  "main": "src/main.js",
+  "dependencies": {
+    "node-appwrite": "^13.0.0",
+    "pdfkit": "^0.14.0",
+    "@google/generative-ai": "^0.15.0"
+  }
+}
