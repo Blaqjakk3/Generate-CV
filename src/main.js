@@ -83,19 +83,41 @@ module.exports = async ({ req, res, log, error }) => {
             cert && cert.title && cert.title.trim() && cert.issuer && cert.issuer.trim()
         );
 
-        // Generate professional summary using Gemini
+        // Generate professional summary using Gemini - IMPROVED PROMPT
         log('Generating professional summary...');
         const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const summaryPrompt = `Generate a professional summary for a CV based on the following information:
-        - Name: ${talent.fullname}
-        - Career Stage: ${talent.careerStage}
-        - Skills: ${combinedSkills.join(', ')}
-        - Interests: ${(talent.interests || []).join(', ')}
-        - Selected Path: ${talent.selectedPath || 'Not specified'}
-        - Work Experiences: ${workExperiences.map(exp => `${exp.position} at ${exp.company}`).join(', ')}
-        - Projects: ${projects.map(proj => proj.title).join(', ')}
         
-        Create a compelling 3-4 sentence professional summary that highlights their strengths, career focus, and key achievements. Make it professional and engaging.`;
+        // Build context for the summary
+        const careerContext = talent.careerStage || 'entry-level';
+        const keySkills = combinedSkills.slice(0, 5); // Limit to top 5 skills
+        const primaryPath = talent.selectedPath || 'technology';
+        const hasExperience = workExperiences.length > 0;
+        const hasProjects = projects.length > 0;
+
+        const summaryPrompt = `Write a professional summary for a CV. Keep it concise, impactful, and 2-3 sentences maximum.
+
+Context:
+- Career Stage: ${careerContext}
+- Primary Field: ${primaryPath}
+- Key Skills: ${keySkills.join(', ')}
+- Has Work Experience: ${hasExperience}
+- Has Projects: ${hasProjects}
+
+Requirements:
+- Start with a strong professional identity statement
+- Mention 2-3 most relevant skills only
+- Include career focus/goals
+- Keep it under 60 words
+- Sound confident and professional
+- Don't mention specific companies or project names
+- Use active voice
+
+Examples of good summaries:
+"A dedicated and results-driven professional with a strong passion for software development. Proficient in Python, Java, and computer networks, with a solid foundation in designing and implementing efficient, scalable systems."
+
+"Passionate data analytics student with practical experience in the telecommunications industry. Adept at leveraging data to drive business decisions with a keen interest in machine learning and artificial intelligence."
+
+Write a similar professional summary:`;
 
         const summaryResult = await model.generateContent(summaryPrompt);
         const professionalSummary = summaryResult.response.text();
@@ -123,7 +145,7 @@ module.exports = async ({ req, res, log, error }) => {
             metadata: {
                 talentName: talent.fullname,
                 generatedAt: new Date().toISOString(),
-                sections: ['Personal Info', 'Professional Summary', 'Education', 'Work Experience', 'Projects', 'Skills', 'Certifications', 'Contact Information']
+                sections: ['Personal Info', 'Professional Summary', 'Education', 'Work Experience', 'Projects', 'Skills', 'Certifications']
             }
         });
 
@@ -140,7 +162,7 @@ module.exports = async ({ req, res, log, error }) => {
 async function generatePDF({ talent, combinedSkills, educationDetails, workExperiences, projects, certifications, contactInfo, professionalSummary }) {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({ 
-            margin: 50,
+            margin: 40, // Reduced margin to fix content shifting
             size: 'A4'
         });
         const buffers = [];
@@ -152,16 +174,15 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
         });
         doc.on('error', reject);
 
-        let yPosition = 60;
-        const pageWidth = 545; // A4 width minus margins
-        const leftMargin = 50;
-        const rightMargin = 50;
+        let yPosition = 50;
+        const pageWidth = 515; // A4 width minus margins (595 - 40*2)
+        const leftMargin = 40;
 
         // Helper function to check if we need a new page
         const checkPageBreak = (requiredSpace) => {
             if (yPosition + requiredSpace > 750) {
                 doc.addPage();
-                yPosition = 60;
+                yPosition = 50;
             }
         };
 
@@ -169,7 +190,7 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
         const addSectionSeparator = () => {
             yPosition += 15;
             doc.moveTo(leftMargin, yPosition)
-               .lineTo(pageWidth + leftMargin, yPosition)
+               .lineTo(leftMargin + pageWidth, yPosition)
                .strokeColor('#cccccc')
                .lineWidth(0.5)
                .stroke();
@@ -186,34 +207,80 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
            });
         yPosition += 35;
 
-        // Contact Information - More compact and professional
+        // FIXED: Contact Information - Properly formatted with clickable links
         const contactParts = [];
         if (talent.email) contactParts.push(talent.email);
         if (contactInfo.phone) contactParts.push(contactInfo.phone);
         
-        // Add linked contact info with hidden URLs
-        const linkedContacts = [];
-        if (contactInfo.linkedin) linkedContacts.push(`LinkedIn: ${talent.fullname}`);
-        if (contactInfo.github) linkedContacts.push('GitHub: Profile');
-        if (contactInfo.portfolio) linkedContacts.push('Portfolio: Website');
-
-        // Combine contact info
-        const allContacts = [...contactParts, ...linkedContacts];
+        // Create contact line with email, phone, and links
+        let contactLine = contactParts.join(' | ');
+        const links = [];
+        if (contactInfo.linkedin) links.push('LinkedIn');
+        if (contactInfo.github) links.push('GitHub');
+        if (contactInfo.portfolio) links.push('Portfolio');
         
-        if (allContacts.length > 0) {
+        if (links.length > 0) {
+            if (contactLine) contactLine += ' | ';
+            contactLine += links.join(' | ');
+        }
+
+        // Display contact information
+        if (contactLine) {
             doc.font('Times-Roman')
                .fontSize(11)
                .fillColor('#333333')
-               .text(allContacts.join(' | '), leftMargin, yPosition, { 
+               .text(contactLine, leftMargin, yPosition, { 
                    align: 'center',
                    width: pageWidth 
                });
-            yPosition += 25;
         }
+
+        // Add clickable links right after contact info
+        if (contactInfo.linkedin || contactInfo.github || contactInfo.portfolio) {
+            yPosition += 18;
+            
+            // Calculate positions for centered links
+            const linkSpacing = 80;
+            const totalLinks = (contactInfo.linkedin ? 1 : 0) + (contactInfo.github ? 1 : 0) + (contactInfo.portfolio ? 1 : 0);
+            const totalWidth = (totalLinks - 1) * linkSpacing;
+            let startX = leftMargin + (pageWidth - totalWidth) / 2;
+            
+            doc.font('Times-Roman')
+               .fontSize(10)
+               .fillColor('#0066cc');
+            
+            if (contactInfo.linkedin) {
+                doc.text('LinkedIn', startX, yPosition, {
+                    link: contactInfo.linkedin,
+                    underline: true,
+                    continued: false
+                });
+                startX += linkSpacing;
+            }
+            
+            if (contactInfo.github) {
+                doc.text('GitHub', startX, yPosition, {
+                    link: contactInfo.github,
+                    underline: true,
+                    continued: false
+                });
+                startX += linkSpacing;
+            }
+            
+            if (contactInfo.portfolio) {
+                doc.text('Portfolio', startX, yPosition, {
+                    link: contactInfo.portfolio,
+                    underline: true,
+                    continued: false
+                });
+            }
+        }
+
+        yPosition += 25;
 
         // Add horizontal line under header
         doc.moveTo(leftMargin, yPosition)
-           .lineTo(pageWidth + leftMargin, yPosition)
+           .lineTo(leftMargin + pageWidth, yPosition)
            .strokeColor('#000000')
            .lineWidth(1)
            .stroke();
@@ -378,11 +445,21 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
             projects.forEach((project, index) => {
                 checkPageBreak(80);
 
-                // Project title - bold
-                doc.font('Times-Bold')
-                   .fontSize(12)
-                   .fillColor('#000000')
-                   .text(project.title, leftMargin, yPosition);
+                // Project title - bold with clickable link
+                if (project.link && project.link.trim()) {
+                    doc.font('Times-Bold')
+                       .fontSize(12)
+                       .fillColor('#0066cc')
+                       .text(project.title, leftMargin, yPosition, {
+                           link: project.link.trim(),
+                           underline: true
+                       });
+                } else {
+                    doc.font('Times-Bold')
+                       .fontSize(12)
+                       .fillColor('#000000')
+                       .text(project.title, leftMargin, yPosition);
+                }
                 yPosition += 16;
                 
                 // Project description
@@ -412,18 +489,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                        .fontSize(11)
                        .fillColor('#333333')
                        .text(project.technologies.trim());
-                    yPosition += 16;
-                }
-                
-                // Project link (hidden behind "Project Link" text)
-                if (project.link && project.link.trim()) {
-                    doc.font('Times-Roman')
-                       .fontSize(11)
-                       .fillColor('#0066cc')
-                       .text('Project Link', leftMargin, yPosition, {
-                           link: project.link.trim(),
-                           underline: true
-                       });
                     yPosition += 16;
                 }
 
@@ -496,11 +561,21 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
             certifications.forEach((cert, index) => {
                 checkPageBreak(50);
 
-                // Certification title - bold
-                doc.font('Times-Bold')
-                   .fontSize(12)
-                   .fillColor('#000000')
-                   .text(cert.title, leftMargin, yPosition);
+                // Certification title - bold with clickable link
+                if (cert.link && cert.link.trim()) {
+                    doc.font('Times-Bold')
+                       .fontSize(12)
+                       .fillColor('#0066cc')
+                       .text(cert.title, leftMargin, yPosition, {
+                           link: cert.link.trim(),
+                           underline: true
+                       });
+                } else {
+                    doc.font('Times-Bold')
+                       .fontSize(12)
+                       .fillColor('#000000')
+                       .text(cert.title, leftMargin, yPosition);
+                }
                 yPosition += 16;
                 
                 // Issuer and date
@@ -514,18 +589,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                    .fillColor('#333333')
                    .text(issuerText, leftMargin, yPosition);
                 yPosition += 14;
-                
-                // Certification link (hidden behind "Certificate" text)
-                if (cert.link && cert.link.trim()) {
-                    doc.font('Times-Roman')
-                       .fontSize(11)
-                       .fillColor('#0066cc')
-                       .text('Certificate', leftMargin, yPosition, {
-                           link: cert.link.trim(),
-                           underline: true
-                       });
-                    yPosition += 16;
-                }
                 
                 // Add spacing between certifications
                 if (index < certifications.length - 1) {
@@ -555,61 +618,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                    align: 'justify',
                    lineGap: 2
                });
-        }
-
-        // Add clickable links for contact information if provided
-        if (contactInfo.linkedin || contactInfo.github || contactInfo.portfolio) {
-            // Go back to add actual links to the contact section
-            // This requires repositioning, so we'll add a footer with links instead
-            
-            // Add footer with actual links
-            const footerY = 750;
-            doc.fontSize(9)
-               .fillColor('#666666');
-            
-            let footerText = 'Links: ';
-            const footerLinks = [];
-            
-            if (contactInfo.linkedin) {
-                footerLinks.push('LinkedIn');
-            }
-            if (contactInfo.github) {
-                footerLinks.push('GitHub');
-            }
-            if (contactInfo.portfolio) {
-                footerLinks.push('Portfolio');
-            }
-            
-            if (footerLinks.length > 0) {
-                footerText += footerLinks.join(' | ');
-                doc.text(footerText, leftMargin, footerY, { width: pageWidth });
-                
-                // Add actual clickable links
-                let linkX = leftMargin + 35; // Start after "Links: "
-                
-                if (contactInfo.linkedin) {
-                    doc.text('LinkedIn', linkX, footerY, {
-                        link: contactInfo.linkedin,
-                        underline: true
-                    });
-                    linkX += 50;
-                }
-                
-                if (contactInfo.github) {
-                    doc.text('GitHub', linkX, footerY, {
-                        link: contactInfo.github,
-                        underline: true
-                    });
-                    linkX += 45;
-                }
-                
-                if (contactInfo.portfolio) {
-                    doc.text('Portfolio', linkX, footerY, {
-                        link: contactInfo.portfolio,
-                        underline: true
-                    });
-                }
-            }
         }
 
         doc.end();
