@@ -152,253 +152,464 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
         });
         doc.on('error', reject);
 
-        let yPosition = 50;
+        let yPosition = 60;
+        const pageWidth = 545; // A4 width minus margins
+        const leftMargin = 50;
+        const rightMargin = 50;
 
-        // Header with Name
-        doc.fontSize(28).font('Helvetica-Bold').text(talent.fullname.toUpperCase(), 50, yPosition, { align: 'center' });
-        yPosition += 40;
+        // Helper function to check if we need a new page
+        const checkPageBreak = (requiredSpace) => {
+            if (yPosition + requiredSpace > 750) {
+                doc.addPage();
+                yPosition = 60;
+            }
+        };
 
-        // Contact Information Line
-        const contactLine = [];
-        if (talent.email) contactLine.push(talent.email);
-        if (contactInfo.phone) contactLine.push(contactInfo.phone);
-        if (contactInfo.linkedin) contactLine.push(`LinkedIn: ${contactInfo.linkedin}`);
-        if (contactInfo.github) contactLine.push(`GitHub: ${contactInfo.github}`);
-        if (contactInfo.portfolio) contactLine.push(`Portfolio: ${contactInfo.portfolio}`);
+        // Helper function to add section separator
+        const addSectionSeparator = () => {
+            yPosition += 15;
+            doc.moveTo(leftMargin, yPosition)
+               .lineTo(pageWidth + leftMargin, yPosition)
+               .strokeColor('#cccccc')
+               .lineWidth(0.5)
+               .stroke();
+            yPosition += 20;
+        };
 
-        if (contactLine.length > 0) {
-            doc.fontSize(11).font('Helvetica').text(contactLine.join(' | '), 50, yPosition, { align: 'center' });
-            yPosition += 30;
+        // Header with Name - Times New Roman, larger size
+        doc.font('Times-Bold')
+           .fontSize(24)
+           .fillColor('#000000')
+           .text(talent.fullname.toUpperCase(), leftMargin, yPosition, { 
+               align: 'center',
+               width: pageWidth 
+           });
+        yPosition += 35;
+
+        // Contact Information - More compact and professional
+        const contactParts = [];
+        if (talent.email) contactParts.push(talent.email);
+        if (contactInfo.phone) contactParts.push(contactInfo.phone);
+        
+        // Add linked contact info with hidden URLs
+        const linkedContacts = [];
+        if (contactInfo.linkedin) linkedContacts.push(`LinkedIn: ${talent.fullname}`);
+        if (contactInfo.github) linkedContacts.push('GitHub: Profile');
+        if (contactInfo.portfolio) linkedContacts.push('Portfolio: Website');
+
+        // Combine contact info
+        const allContacts = [...contactParts, ...linkedContacts];
+        
+        if (allContacts.length > 0) {
+            doc.font('Times-Roman')
+               .fontSize(11)
+               .fillColor('#333333')
+               .text(allContacts.join(' | '), leftMargin, yPosition, { 
+                   align: 'center',
+                   width: pageWidth 
+               });
+            yPosition += 25;
         }
 
-        // Add a horizontal line
-        doc.moveTo(50, yPosition).lineTo(550, yPosition).stroke();
-        yPosition += 20;
+        // Add horizontal line under header
+        doc.moveTo(leftMargin, yPosition)
+           .lineTo(pageWidth + leftMargin, yPosition)
+           .strokeColor('#000000')
+           .lineWidth(1)
+           .stroke();
+        yPosition += 25;
 
         // Professional Summary Section
-        if (professionalSummary) {
-            doc.fontSize(16).font('Helvetica-Bold').text('PROFESSIONAL SUMMARY', 50, yPosition);
+        if (professionalSummary && professionalSummary.trim()) {
+            checkPageBreak(80);
+            
+            doc.font('Times-Bold')
+               .fontSize(14)
+               .fillColor('#000000')
+               .text('PROFESSIONAL SUMMARY', leftMargin, yPosition);
             yPosition += 20;
-            doc.fontSize(11).font('Helvetica').text(professionalSummary, 50, yPosition, { 
-                width: 500, 
-                align: 'justify' 
-            });
-            yPosition += doc.heightOfString(professionalSummary, { width: 500 }) + 20;
+            
+            doc.font('Times-Roman')
+               .fontSize(12)
+               .fillColor('#000000')
+               .text(professionalSummary.trim(), leftMargin, yPosition, { 
+                   width: pageWidth, 
+                   align: 'justify',
+                   lineGap: 2
+               });
+            yPosition += doc.heightOfString(professionalSummary.trim(), { 
+                width: pageWidth, 
+                lineGap: 2 
+            }) + 10;
+            
+            addSectionSeparator();
         }
 
         // Education Section
         if (educationDetails && educationDetails.length > 0) {
-            // Check if we need a new page
-            if (yPosition > 700) {
-                doc.addPage();
-                yPosition = 50;
-            }
+            checkPageBreak(100);
 
-            doc.fontSize(16).font('Helvetica-Bold').text('EDUCATION', 50, yPosition);
+            doc.font('Times-Bold')
+               .fontSize(14)
+               .fillColor('#000000')
+               .text('EDUCATION', leftMargin, yPosition);
             yPosition += 20;
 
-            educationDetails.forEach((edu) => {
-                // Check if we need a new page for each education entry
-                if (yPosition > 720) {
-                    doc.addPage();
-                    yPosition = 50;
-                }
+            educationDetails.forEach((edu, index) => {
+                checkPageBreak(60);
 
-                doc.fontSize(12).font('Helvetica-Bold').text(edu.degree, 50, yPosition);
-                yPosition += 15;
+                // Degree name - bold
+                doc.font('Times-Bold')
+                   .fontSize(12)
+                   .fillColor('#000000')
+                   .text(edu.degree, leftMargin, yPosition);
+                yPosition += 16;
                 
-                doc.fontSize(11).font('Helvetica-Oblique').text(edu.institution, 50, yPosition);
+                // Institution and location
+                let institutionText = edu.institution;
                 if (edu.location) {
-                    doc.text(` • ${edu.location}`, { continued: true });
+                    institutionText += ` • ${edu.location}`;
                 }
-                yPosition += 15;
                 
+                doc.font('Times-Italic')
+                   .fontSize(11)
+                   .fillColor('#333333')
+                   .text(institutionText, leftMargin, yPosition);
+                yPosition += 14;
+                
+                // Date range
                 if (edu.startDate || edu.endDate) {
                     const dateRange = `${edu.startDate || ''} - ${edu.endDate || 'Present'}`;
-                    doc.fontSize(10).font('Helvetica').text(dateRange, 50, yPosition);
-                    yPosition += 20;
+                    doc.font('Times-Roman')
+                       .fontSize(10)
+                       .fillColor('#666666')
+                       .text(dateRange, leftMargin, yPosition);
+                    yPosition += 18;
                 } else {
+                    yPosition += 8;
+                }
+                
+                // Add spacing between education entries
+                if (index < educationDetails.length - 1) {
                     yPosition += 10;
                 }
             });
+            
+            addSectionSeparator();
         }
 
         // Work Experience Section
         if (workExperiences && workExperiences.length > 0) {
-            // Check if we need a new page
-            if (yPosition > 650) {
-                doc.addPage();
-                yPosition = 50;
-            }
+            checkPageBreak(100);
 
-            doc.fontSize(16).font('Helvetica-Bold').text('WORK EXPERIENCE', 50, yPosition);
+            doc.font('Times-Bold')
+               .fontSize(14)
+               .fillColor('#000000')
+               .text('WORK EXPERIENCE', leftMargin, yPosition);
             yPosition += 20;
 
-            workExperiences.forEach((exp) => {
-                // Check if we need a new page for each experience
-                if (yPosition > 600) {
-                    doc.addPage();
-                    yPosition = 50;
-                }
+            workExperiences.forEach((exp, index) => {
+                checkPageBreak(80);
 
-                doc.fontSize(12).font('Helvetica-Bold').text(exp.position, 50, yPosition);
-                yPosition += 15;
+                // Position title - bold
+                doc.font('Times-Bold')
+                   .fontSize(12)
+                   .fillColor('#000000')
+                   .text(exp.position, leftMargin, yPosition);
+                yPosition += 16;
                 
-                doc.fontSize(11).font('Helvetica-Oblique').text(exp.company, 50, yPosition);
+                // Company and location
+                let companyText = exp.company;
                 if (exp.location) {
-                    doc.text(` • ${exp.location}`, { continued: true });
+                    companyText += ` • ${exp.location}`;
                 }
-                yPosition += 15;
                 
+                doc.font('Times-Italic')
+                   .fontSize(11)
+                   .fillColor('#333333')
+                   .text(companyText, leftMargin, yPosition);
+                yPosition += 14;
+                
+                // Date range
                 if (exp.startDate || exp.endDate) {
                     const dateRange = `${exp.startDate || ''} - ${exp.endDate || 'Present'}`;
-                    doc.fontSize(10).font('Helvetica').text(dateRange, 50, yPosition);
-                    yPosition += 15;
+                    doc.font('Times-Roman')
+                       .fontSize(10)
+                       .fillColor('#666666')
+                       .text(dateRange, leftMargin, yPosition);
+                    yPosition += 16;
                 }
                 
-                if (exp.description) {
-                    doc.fontSize(10).font('Helvetica').text(exp.description, 50, yPosition, { 
-                        width: 500, 
-                        align: 'justify' 
-                    });
-                    yPosition += doc.heightOfString(exp.description, { width: 500 }) + 20;
-                } else {
-                    yPosition += 10;
+                // Job description
+                if (exp.description && exp.description.trim()) {
+                    doc.font('Times-Roman')
+                       .fontSize(12)
+                       .fillColor('#000000')
+                       .text(exp.description.trim(), leftMargin, yPosition, { 
+                           width: pageWidth, 
+                           align: 'justify',
+                           lineGap: 2
+                       });
+                    yPosition += doc.heightOfString(exp.description.trim(), { 
+                        width: pageWidth, 
+                        lineGap: 2 
+                    }) + 10;
+                }
+                
+                // Add spacing between work experiences
+                if (index < workExperiences.length - 1) {
+                    yPosition += 15;
                 }
             });
+            
+            addSectionSeparator();
         }
 
         // Projects Section
         if (projects && projects.length > 0) {
-            // Check if we need a new page
-            if (yPosition > 650) {
-                doc.addPage();
-                yPosition = 50;
-            }
+            checkPageBreak(100);
 
-            doc.fontSize(16).font('Helvetica-Bold').text('PROJECTS', 50, yPosition);
+            doc.font('Times-Bold')
+               .fontSize(14)
+               .fillColor('#000000')
+               .text('PROJECTS', leftMargin, yPosition);
             yPosition += 20;
 
-            projects.forEach((project) => {
-                // Check if we need a new page for each project
-                if (yPosition > 600) {
-                    doc.addPage();
-                    yPosition = 50;
-                }
+            projects.forEach((project, index) => {
+                checkPageBreak(80);
 
-                doc.fontSize(12).font('Helvetica-Bold').text(project.title, 50, yPosition);
-                yPosition += 15;
+                // Project title - bold
+                doc.font('Times-Bold')
+                   .fontSize(12)
+                   .fillColor('#000000')
+                   .text(project.title, leftMargin, yPosition);
+                yPosition += 16;
                 
-                if (project.description) {
-                    doc.fontSize(10).font('Helvetica').text(project.description, 50, yPosition, { 
-                        width: 500, 
-                        align: 'justify' 
-                    });
-                    yPosition += doc.heightOfString(project.description, { width: 500 }) + 10;
+                // Project description
+                if (project.description && project.description.trim()) {
+                    doc.font('Times-Roman')
+                       .fontSize(12)
+                       .fillColor('#000000')
+                       .text(project.description.trim(), leftMargin, yPosition, { 
+                           width: pageWidth, 
+                           align: 'justify',
+                           lineGap: 2
+                       });
+                    yPosition += doc.heightOfString(project.description.trim(), { 
+                        width: pageWidth, 
+                        lineGap: 2 
+                    }) + 10;
                 }
                 
-                if (project.technologies) {
-                    doc.fontSize(10).font('Helvetica-Bold').text('Technologies: ', 50, yPosition, { continued: true });
-                    doc.font('Helvetica').text(project.technologies);
-                    yPosition += 15;
+                // Technologies used
+                if (project.technologies && project.technologies.trim()) {
+                    doc.font('Times-Bold')
+                       .fontSize(11)
+                       .fillColor('#000000')
+                       .text('Technologies: ', leftMargin, yPosition, { continued: true });
+                    
+                    doc.font('Times-Roman')
+                       .fontSize(11)
+                       .fillColor('#333333')
+                       .text(project.technologies.trim());
+                    yPosition += 16;
                 }
                 
-                if (project.link) {
-                    doc.fontSize(10).font('Helvetica').text(`Link: ${project.link}`, 50, yPosition, {
-                        link: project.link,
-                        underline: true
-                    });
-                    yPosition += 15;
+                // Project link (hidden behind "Project Link" text)
+                if (project.link && project.link.trim()) {
+                    doc.font('Times-Roman')
+                       .fontSize(11)
+                       .fillColor('#0066cc')
+                       .text('Project Link', leftMargin, yPosition, {
+                           link: project.link.trim(),
+                           underline: true
+                       });
+                    yPosition += 16;
                 }
 
                 // Project details/achievements
-                if (project.details && project.details.length > 0) {
+                if (project.details && Array.isArray(project.details) && project.details.length > 0) {
                     project.details.forEach((detail) => {
-                        if (detail.trim()) {
-                            doc.fontSize(10).font('Helvetica').text(`• ${detail}`, 60, yPosition, { width: 490 });
-                            yPosition += doc.heightOfString(`• ${detail}`, { width: 490 }) + 5;
+                        if (detail && detail.trim()) {
+                            checkPageBreak(30);
+                            doc.font('Times-Roman')
+                               .fontSize(11)
+                               .fillColor('#000000')
+                               .text(`• ${detail.trim()}`, leftMargin + 15, yPosition, { 
+                                   width: pageWidth - 15,
+                                   lineGap: 1
+                               });
+                            yPosition += doc.heightOfString(`• ${detail.trim()}`, { 
+                                width: pageWidth - 15,
+                                lineGap: 1
+                            }) + 5;
                         }
                     });
                 }
                 
-                yPosition += 15;
+                // Add spacing between projects
+                if (index < projects.length - 1) {
+                    yPosition += 15;
+                }
             });
+            
+            addSectionSeparator();
         }
 
-        // Skills Section
+        // Technical Skills Section
         if (combinedSkills && combinedSkills.length > 0) {
-            // Check if we need a new page
-            if (yPosition > 720) {
-                doc.addPage();
-                yPosition = 50;
-            }
+            checkPageBreak(60);
 
-            doc.fontSize(16).font('Helvetica-Bold').text('TECHNICAL SKILLS', 50, yPosition);
+            doc.font('Times-Bold')
+               .fontSize(14)
+               .fillColor('#000000')
+               .text('TECHNICAL SKILLS', leftMargin, yPosition);
             yPosition += 20;
             
             const skillsText = combinedSkills.join(' • ');
-            doc.fontSize(11).font('Helvetica').text(skillsText, 50, yPosition, { 
-                width: 500, 
-                align: 'justify' 
-            });
-            yPosition += doc.heightOfString(skillsText, { width: 500 }) + 20;
+            doc.font('Times-Roman')
+               .fontSize(12)
+               .fillColor('#000000')
+               .text(skillsText, leftMargin, yPosition, { 
+                   width: pageWidth, 
+                   align: 'justify',
+                   lineGap: 2
+               });
+            yPosition += doc.heightOfString(skillsText, { 
+                width: pageWidth, 
+                lineGap: 2 
+            }) + 10;
+            
+            addSectionSeparator();
         }
 
         // Certifications Section
         if (certifications && certifications.length > 0) {
-            // Check if we need a new page
-            if (yPosition > 650) {
-                doc.addPage();
-                yPosition = 50;
-            }
+            checkPageBreak(80);
 
-            doc.fontSize(16).font('Helvetica-Bold').text('CERTIFICATIONS & ACHIEVEMENTS', 50, yPosition);
+            doc.font('Times-Bold')
+               .fontSize(14)
+               .fillColor('#000000')
+               .text('CERTIFICATIONS & ACHIEVEMENTS', leftMargin, yPosition);
             yPosition += 20;
 
-            certifications.forEach((cert) => {
-                // Check if we need a new page for each certification
-                if (yPosition > 720) {
-                    doc.addPage();
-                    yPosition = 50;
-                }
+            certifications.forEach((cert, index) => {
+                checkPageBreak(50);
 
-                doc.fontSize(11).font('Helvetica-Bold').text(cert.title, 50, yPosition);
-                yPosition += 15;
+                // Certification title - bold
+                doc.font('Times-Bold')
+                   .fontSize(12)
+                   .fillColor('#000000')
+                   .text(cert.title, leftMargin, yPosition);
+                yPosition += 16;
                 
-                doc.fontSize(10).font('Helvetica-Oblique').text(cert.issuer, 50, yPosition);
+                // Issuer and date
+                let issuerText = cert.issuer;
                 if (cert.date) {
-                    doc.text(` • ${cert.date}`, { continued: true });
+                    issuerText += ` • ${cert.date}`;
                 }
-                yPosition += 15;
                 
-                if (cert.link) {
-                    doc.fontSize(10).font('Helvetica').text(`Link: ${cert.link}`, 50, yPosition, {
-                        link: cert.link,
-                        underline: true
-                    });
-                    yPosition += 20;
-                } else {
+                doc.font('Times-Italic')
+                   .fontSize(11)
+                   .fillColor('#333333')
+                   .text(issuerText, leftMargin, yPosition);
+                yPosition += 14;
+                
+                // Certification link (hidden behind "Certificate" text)
+                if (cert.link && cert.link.trim()) {
+                    doc.font('Times-Roman')
+                       .fontSize(11)
+                       .fillColor('#0066cc')
+                       .text('Certificate', leftMargin, yPosition, {
+                           link: cert.link.trim(),
+                           underline: true
+                       });
+                    yPosition += 16;
+                }
+                
+                // Add spacing between certifications
+                if (index < certifications.length - 1) {
                     yPosition += 10;
                 }
             });
+            
+            addSectionSeparator();
         }
 
         // Interests Section (if available)
         if (talent.interests && talent.interests.length > 0) {
-            // Check if we need a new page
-            if (yPosition > 720) {
-                doc.addPage();
-                yPosition = 50;
-            }
+            checkPageBreak(60);
 
-            doc.fontSize(16).font('Helvetica-Bold').text('INTERESTS', 50, yPosition);
+            doc.font('Times-Bold')
+               .fontSize(14)
+               .fillColor('#000000')
+               .text('INTERESTS', leftMargin, yPosition);
             yPosition += 20;
             
             const interestsText = talent.interests.join(' • ');
-            doc.fontSize(11).font('Helvetica').text(interestsText, 50, yPosition, { 
-                width: 500, 
-                align: 'justify' 
-            });
+            doc.font('Times-Roman')
+               .fontSize(12)
+               .fillColor('#000000')
+               .text(interestsText, leftMargin, yPosition, { 
+                   width: pageWidth, 
+                   align: 'justify',
+                   lineGap: 2
+               });
+        }
+
+        // Add clickable links for contact information if provided
+        if (contactInfo.linkedin || contactInfo.github || contactInfo.portfolio) {
+            // Go back to add actual links to the contact section
+            // This requires repositioning, so we'll add a footer with links instead
+            
+            // Add footer with actual links
+            const footerY = 750;
+            doc.fontSize(9)
+               .fillColor('#666666');
+            
+            let footerText = 'Links: ';
+            const footerLinks = [];
+            
+            if (contactInfo.linkedin) {
+                footerLinks.push('LinkedIn');
+            }
+            if (contactInfo.github) {
+                footerLinks.push('GitHub');
+            }
+            if (contactInfo.portfolio) {
+                footerLinks.push('Portfolio');
+            }
+            
+            if (footerLinks.length > 0) {
+                footerText += footerLinks.join(' | ');
+                doc.text(footerText, leftMargin, footerY, { width: pageWidth });
+                
+                // Add actual clickable links
+                let linkX = leftMargin + 35; // Start after "Links: "
+                
+                if (contactInfo.linkedin) {
+                    doc.text('LinkedIn', linkX, footerY, {
+                        link: contactInfo.linkedin,
+                        underline: true
+                    });
+                    linkX += 50;
+                }
+                
+                if (contactInfo.github) {
+                    doc.text('GitHub', linkX, footerY, {
+                        link: contactInfo.github,
+                        underline: true
+                    });
+                    linkX += 45;
+                }
+                
+                if (contactInfo.portfolio) {
+                    doc.text('Portfolio', linkX, footerY, {
+                        link: contactInfo.portfolio,
+                        underline: true
+                    });
+                }
+            }
         }
 
         doc.end();
