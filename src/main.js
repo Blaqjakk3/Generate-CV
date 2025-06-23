@@ -62,6 +62,24 @@ module.exports = async ({ req, res, log, error }) => {
         const talent = talentQuery.documents[0];
         log(`Found talent: ${talent.fullname}`);
 
+        // Fetch career path details if selectedPath exists
+        let careerPath = null;
+        if (talent.selectedPath) {
+            try {
+                log(`Fetching career path details for ID: ${talent.selectedPath}`);
+                const careerPathDoc = await databases.getDocument(
+                    'career4me',
+                    'careerPaths', 
+                    talent.selectedPath
+                );
+                careerPath = careerPathDoc;
+                log(`Found career path: ${careerPath.title}`);
+            } catch (pathError) {
+                error('Failed to fetch career path:', pathError);
+                // Continue without career path data - we'll use fallback
+            }
+        }
+
         // Combine skills - avoid duplicates
         const existingSkills = talent.skills || [];
         const combinedSkills = [...new Set([...existingSkills, ...additionalSkills])];
@@ -83,49 +101,104 @@ module.exports = async ({ req, res, log, error }) => {
             cert && cert.title && cert.title.trim() && cert.issuer && cert.issuer.trim()
         );
 
-        // Generate professional summary using Gemini - IMPROVED PROMPT
+        // Generate professional summary using Gemini with enhanced context
         log('Generating professional summary...');
         const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
         
-        // Build context for the summary
-        const careerContext = talent.careerStage || 'entry-level';
-        const keySkills = combinedSkills.slice(0, 5); // Limit to top 5 skills
-        const primaryPath = talent.selectedPath || 'technology';
-        const hasExperience = workExperiences.length > 0;
-        const hasProjects = projects.length > 0;
+        // Build comprehensive context for the summary
+        const careerStage = talent.careerStage || 'Pathfinder';
+        const keySkills = combinedSkills.slice(0, 6); // Top 6 skills
+        const hasExperience = validWorkExperience.length > 0;
+        const hasProjects = validProjects.length > 0;
+        const hasCertifications = validCertifications.length > 0;
+        const hasEducation = validEducation.length > 0;
+        
+        // Career stage context for better summary
+        const getCareerStageContext = (stage) => {
+            switch (stage) {
+                case 'Pathfinder':
+                    return {
+                        description: 'Someone finding their feet in career life, looking for their career and learning',
+                        tone: 'eager to learn, motivated, entry-level focused',
+                        focus: 'learning potential, foundational skills, enthusiasm'
+                    };
+                case 'Trailblazer':
+                    return {
+                        description: 'Someone with a career looking to continue growth',
+                        tone: 'experienced, growth-oriented, seeking advancement',
+                        focus: 'proven experience, leadership potential, continuous improvement'
+                    };
+                case 'Horizon Changer':
+                    return {
+                        description: 'Someone in a career path looking to pivot to another',
+                        tone: 'transitioning, leveraging transferable skills, adaptive',
+                        focus: 'transferable skills, adaptability, career transition goals'
+                    };
+                default:
+                    return {
+                        description: 'Professional seeking career development',
+                        tone: 'professional, adaptable',
+                        focus: 'skills and experience'
+                    };
+            }
+        };
 
-        const summaryPrompt = `Write a professional summary for a CV. Keep it concise, impactful, and 2-3 sentences maximum.
+        const stageContext = getCareerStageContext(careerStage);
+        
+        // Build the enhanced summary prompt
+        let summaryPrompt = `Write a compelling professional summary for a CV. Keep it concise, impactful, and 2-3 sentences maximum.
 
-Context:
-- Career Stage: ${careerContext}
-- Primary Field: ${primaryPath}
+TALENT CONTEXT:
+- Career Stage: ${careerStage} (${stageContext.description})
+- Summary Tone: ${stageContext.tone}
+- Focus Areas: ${stageContext.focus}
 - Key Skills: ${keySkills.join(', ')}
 - Has Work Experience: ${hasExperience}
 - Has Projects: ${hasProjects}
+- Has Certifications: ${hasCertifications}
+- Has Education: ${hasEducation}`;
 
-Requirements:
+        // Add career path context if available
+        if (careerPath) {
+            summaryPrompt += `
+- Target Career Field: ${careerPath.title}
+- Industry: ${careerPath.industry}
+- Required Skills for Path: ${careerPath.requiredSkills ? careerPath.requiredSkills.slice(0, 4).join(', ') : 'Not specified'}`;
+        }
+
+        summaryPrompt += `
+
+WRITING REQUIREMENTS:
 - Start with a strong professional identity statement
-- Mention 2-3 most relevant skills only
-- Include career focus/goals
-- Keep it under 60 words
-- Sound confident and professional
-- Don't mention specific companies or project names
-- Use active voice
+- Use active voice and confident language
+- Mention 2-3 most relevant skills that align with the career path
+- Include career aspirations that match the career stage context
+- Keep under 60 words total
+- Sound professional and authentic
+- Don't mention specific companies, project names, or personal details
+- Match the tone to the career stage (${stageContext.tone})
 
-Examples of good summaries:
-"A dedicated and results-driven professional with a strong passion for software development. Proficient in Python, Java, and computer networks, with a solid foundation in designing and implementing efficient, scalable systems."
+EXAMPLES BY CAREER STAGE:
 
-"Passionate data analytics student with practical experience in the telecommunications industry. Adept at leveraging data to drive business decisions with a keen interest in machine learning and artificial intelligence."
+Pathfinder Example:
+"Motivated ${careerPath ? careerPath.title.toLowerCase() : 'professional'} with strong foundation in [key skills]. Eager to apply academic knowledge and hands-on project experience to contribute meaningfully while continuing to learn and grow in [field/industry]."
 
-Write a similar professional summary:`;
+Trailblazer Example:
+"Experienced ${careerPath ? careerPath.title.toLowerCase() : 'professional'} with proven expertise in [key skills]. Demonstrated ability to [relevant achievement] with a track record of delivering results and seeking opportunities for continued growth and leadership."
+
+Horizon Changer Example:
+"Adaptable professional transitioning into ${careerPath ? careerPath.title.toLowerCase() : 'new field'} with transferable skills in [relevant skills]. Bringing unique perspective from [previous experience] combined with fresh enthusiasm for [new field focus]."
+
+Write a professional summary that matches the ${careerStage} career stage:`;
 
         const summaryResult = await model.generateContent(summaryPrompt);
-        const professionalSummary = summaryResult.response.text();
+        const professionalSummary = summaryResult.response.text().trim();
 
         log('Generating PDF...');
         // Generate PDF
         const pdfBuffer = await generatePDF({
             talent,
+            careerPath,
             combinedSkills,
             educationDetails: validEducation,
             workExperiences: validWorkExperience,
@@ -144,6 +217,8 @@ Write a similar professional summary:`;
             pdfData: base64PDF,
             metadata: {
                 talentName: talent.fullname,
+                careerStage: careerStage,
+                careerPath: careerPath ? careerPath.title : 'Not specified',
                 generatedAt: new Date().toISOString(),
                 sections: ['Personal Info', 'Professional Summary', 'Education', 'Work Experience', 'Projects', 'Skills', 'Certifications']
             }
@@ -159,10 +234,10 @@ Write a similar professional summary:`;
     }
 };
 
-async function generatePDF({ talent, combinedSkills, educationDetails, workExperiences, projects, certifications, contactInfo, professionalSummary }) {
+async function generatePDF({ talent, careerPath, combinedSkills, educationDetails, workExperiences, projects, certifications, contactInfo, professionalSummary }) {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({ 
-            margin: 40, // Reduced margin to fix content shifting
+            margin: 40,
             size: 'A4'
         });
         const buffers = [];
@@ -207,25 +282,25 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
            });
         yPosition += 35;
 
-        // FIXED: Contact Information - Properly formatted with clickable links
+        // Career Path subtitle (if available)
+        if (careerPath) {
+            doc.font('Times-Italic')
+               .fontSize(14)
+               .fillColor('#333333')
+               .text(careerPath.title, leftMargin, yPosition, { 
+                   align: 'center',
+                   width: pageWidth 
+               });
+            yPosition += 25;
+        }
+
+        // Contact Information
         const contactParts = [];
         if (talent.email) contactParts.push(talent.email);
         if (contactInfo.phone) contactParts.push(contactInfo.phone);
         
-        // Create contact line with email, phone, and links
-        let contactLine = contactParts.join(' | ');
-        const links = [];
-        if (contactInfo.linkedin) links.push('LinkedIn');
-        if (contactInfo.github) links.push('GitHub');
-        if (contactInfo.portfolio) links.push('Portfolio');
-        
-        if (links.length > 0) {
-            if (contactLine) contactLine += ' | ';
-            contactLine += links.join(' | ');
-        }
-
-        // Display contact information
-        if (contactLine) {
+        if (contactParts.length > 0) {
+            const contactLine = contactParts.join(' | ');
             doc.font('Times-Roman')
                .fontSize(11)
                .fillColor('#333333')
@@ -233,50 +308,53 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                    align: 'center',
                    width: pageWidth 
                });
+            yPosition += 18;
         }
 
-        // Add clickable links right after contact info
-        if (contactInfo.linkedin || contactInfo.github || contactInfo.portfolio) {
-            yPosition += 18;
-            
-            // Calculate positions for centered links
-            const linkSpacing = 80;
-            const totalLinks = (contactInfo.linkedin ? 1 : 0) + (contactInfo.github ? 1 : 0) + (contactInfo.portfolio ? 1 : 0);
-            const totalWidth = (totalLinks - 1) * linkSpacing;
+        // Professional links
+        const availableLinks = [];
+        if (contactInfo.linkedin) availableLinks.push({ text: contactInfo.linkedin, url: contactInfo.linkedin });
+        if (contactInfo.github) availableLinks.push({ text: contactInfo.github, url: contactInfo.github });
+        if (contactInfo.portfolio) availableLinks.push({ text: contactInfo.portfolio, url: contactInfo.portfolio });
+        
+        if (availableLinks.length > 0) {
+            const linkSpacing = 120;
+            const totalWidth = (availableLinks.length - 1) * linkSpacing;
             let startX = leftMargin + (pageWidth - totalWidth) / 2;
             
             doc.font('Times-Roman')
                .fontSize(10)
                .fillColor('#0066cc');
             
-            if (contactInfo.linkedin) {
-                doc.text('LinkedIn', startX, yPosition, {
-                    link: contactInfo.linkedin,
+            availableLinks.forEach((link, index) => {
+                let displayText = link.text;
+                if (displayText.startsWith('http://')) {
+                    displayText = displayText.substring(7);
+                }
+                if (displayText.startsWith('https://')) {
+                    displayText = displayText.substring(8);
+                }
+                if (displayText.startsWith('www.')) {
+                    displayText = displayText.substring(4);
+                }
+                if (displayText.length > 25) {
+                    displayText = displayText.substring(0, 22) + '...';
+                }
+                
+                doc.text(displayText, startX, yPosition, {
+                    link: link.url,
                     underline: true,
                     continued: false
                 });
-                startX += linkSpacing;
-            }
-            
-            if (contactInfo.github) {
-                doc.text('GitHub', startX, yPosition, {
-                    link: contactInfo.github,
-                    underline: true,
-                    continued: false
-                });
-                startX += linkSpacing;
-            }
-            
-            if (contactInfo.portfolio) {
-                doc.text('Portfolio', startX, yPosition, {
-                    link: contactInfo.portfolio,
-                    underline: true,
-                    continued: false
-                });
-            }
+                
+                if (index < availableLinks.length - 1) {
+                    startX += linkSpacing;
+                }
+            });
+            yPosition += 18;
         }
 
-        yPosition += 25;
+        yPosition += 10;
 
         // Add horizontal line under header
         doc.moveTo(leftMargin, yPosition)
@@ -325,14 +403,12 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
             educationDetails.forEach((edu, index) => {
                 checkPageBreak(60);
 
-                // Degree name - bold
                 doc.font('Times-Bold')
                    .fontSize(12)
                    .fillColor('#000000')
                    .text(edu.degree, leftMargin, yPosition);
                 yPosition += 16;
                 
-                // Institution and location
                 let institutionText = edu.institution;
                 if (edu.location) {
                     institutionText += ` • ${edu.location}`;
@@ -344,7 +420,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                    .text(institutionText, leftMargin, yPosition);
                 yPosition += 14;
                 
-                // Date range
                 if (edu.startDate || edu.endDate) {
                     const dateRange = `${edu.startDate || ''} - ${edu.endDate || 'Present'}`;
                     doc.font('Times-Roman')
@@ -356,7 +431,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                     yPosition += 8;
                 }
                 
-                // Add spacing between education entries
                 if (index < educationDetails.length - 1) {
                     yPosition += 10;
                 }
@@ -378,14 +452,12 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
             workExperiences.forEach((exp, index) => {
                 checkPageBreak(80);
 
-                // Position title - bold
                 doc.font('Times-Bold')
                    .fontSize(12)
                    .fillColor('#000000')
                    .text(exp.position, leftMargin, yPosition);
                 yPosition += 16;
                 
-                // Company and location
                 let companyText = exp.company;
                 if (exp.location) {
                     companyText += ` • ${exp.location}`;
@@ -397,7 +469,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                    .text(companyText, leftMargin, yPosition);
                 yPosition += 14;
                 
-                // Date range
                 if (exp.startDate || exp.endDate) {
                     const dateRange = `${exp.startDate || ''} - ${exp.endDate || 'Present'}`;
                     doc.font('Times-Roman')
@@ -407,7 +478,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                     yPosition += 16;
                 }
                 
-                // Job description
                 if (exp.description && exp.description.trim()) {
                     doc.font('Times-Roman')
                        .fontSize(12)
@@ -423,7 +493,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                     }) + 10;
                 }
                 
-                // Add spacing between work experiences
                 if (index < workExperiences.length - 1) {
                     yPosition += 15;
                 }
@@ -445,7 +514,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
             projects.forEach((project, index) => {
                 checkPageBreak(80);
 
-                // Project title - bold with clickable link
                 if (project.link && project.link.trim()) {
                     doc.font('Times-Bold')
                        .fontSize(12)
@@ -462,7 +530,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                 }
                 yPosition += 16;
                 
-                // Project description
                 if (project.description && project.description.trim()) {
                     doc.font('Times-Roman')
                        .fontSize(12)
@@ -478,7 +545,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                     }) + 10;
                 }
                 
-                // Technologies used
                 if (project.technologies && project.technologies.trim()) {
                     doc.font('Times-Bold')
                        .fontSize(11)
@@ -492,7 +558,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                     yPosition += 16;
                 }
 
-                // Project details/achievements
                 if (project.details && Array.isArray(project.details) && project.details.length > 0) {
                     project.details.forEach((detail) => {
                         if (detail && detail.trim()) {
@@ -512,7 +577,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                     });
                 }
                 
-                // Add spacing between projects
                 if (index < projects.length - 1) {
                     yPosition += 15;
                 }
@@ -561,7 +625,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
             certifications.forEach((cert, index) => {
                 checkPageBreak(50);
 
-                // Certification title - bold with clickable link
                 if (cert.link && cert.link.trim()) {
                     doc.font('Times-Bold')
                        .fontSize(12)
@@ -578,7 +641,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                 }
                 yPosition += 16;
                 
-                // Issuer and date
                 let issuerText = cert.issuer;
                 if (cert.date) {
                     issuerText += ` • ${cert.date}`;
@@ -590,7 +652,6 @@ async function generatePDF({ talent, combinedSkills, educationDetails, workExper
                    .text(issuerText, leftMargin, yPosition);
                 yPosition += 14;
                 
-                // Add spacing between certifications
                 if (index < certifications.length - 1) {
                     yPosition += 10;
                 }
