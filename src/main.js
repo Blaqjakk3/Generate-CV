@@ -234,7 +234,7 @@ Write a professional summary that matches the ${careerStage} career stage:`;
     }
 };
 
-async function generatePDF({ talent, careerPath, combinedSkills, educationDetails, workExperiences, projects, certifications, contactInfo, professionalSummary }) {
+async function generatePDF({ talent, careerPath, combinedSkills, educationDetails, workExperiences, projects, certifications, contactInfo, professionalSummar }) {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({ 
             margin: 40,
@@ -311,14 +311,14 @@ async function generatePDF({ talent, careerPath, combinedSkills, educationDetail
             yPosition += 18;
         }
 
-        // Professional links
+        // Professional links with clean labels
         const availableLinks = [];
-        if (contactInfo.linkedin) availableLinks.push({ text: contactInfo.linkedin, url: contactInfo.linkedin });
-        if (contactInfo.github) availableLinks.push({ text: contactInfo.github, url: contactInfo.github });
-        if (contactInfo.portfolio) availableLinks.push({ text: contactInfo.portfolio, url: contactInfo.portfolio });
+        if (contactInfo.linkedin) availableLinks.push({ text: 'LinkedIn', url: contactInfo.linkedin });
+        if (contactInfo.github) availableLinks.push({ text: 'GitHub', url: contactInfo.github });
+        if (contactInfo.portfolio) availableLinks.push({ text: 'Portfolio', url: contactInfo.portfolio });
         
         if (availableLinks.length > 0) {
-            const linkSpacing = 120;
+            const linkSpacing = 80; // Reduced spacing since text is shorter
             const totalWidth = (availableLinks.length - 1) * linkSpacing;
             let startX = leftMargin + (pageWidth - totalWidth) / 2;
             
@@ -327,21 +327,7 @@ async function generatePDF({ talent, careerPath, combinedSkills, educationDetail
                .fillColor('#0066cc');
             
             availableLinks.forEach((link, index) => {
-                let displayText = link.text;
-                if (displayText.startsWith('http://')) {
-                    displayText = displayText.substring(7);
-                }
-                if (displayText.startsWith('https://')) {
-                    displayText = displayText.substring(8);
-                }
-                if (displayText.startsWith('www.')) {
-                    displayText = displayText.substring(4);
-                }
-                if (displayText.length > 25) {
-                    displayText = displayText.substring(0, 22) + '...';
-                }
-                
-                doc.text(displayText, startX, yPosition, {
+                doc.text(link.text, startX, yPosition, {
                     link: link.url,
                     underline: true,
                     continued: false
