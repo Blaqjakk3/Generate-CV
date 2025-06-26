@@ -578,7 +578,7 @@ async function generatePDF({ talent, careerPath, combinedSkills, educationDetail
             doc.font('Times-Bold')
                .fontSize(14)
                .fillColor('#000000')
-               .text('TECHNICAL SKILLS', leftMargin, yPosition);
+               .text('SKILLS', leftMargin, yPosition);
             yPosition += 20;
             
             const skillsText = combinedSkills.join(' • ');
