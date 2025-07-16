@@ -103,7 +103,7 @@ module.exports = async ({ req, res, log, error }) => {
 
         // Generate professional summary using Gemini with enhanced context
         log('Generating professional summary...');
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         
         // Build comprehensive context for the summary
         const careerStage = talent.careerStage || 'Pathfinder';
